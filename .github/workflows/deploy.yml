@@ -42,6 +42,7 @@ jobs:
         config: |
           Host server
             HostName ${{ secrets.SERVER_IP }}
+            Port ${{ secrets.SERVER_PORT }}
             User ${{ secrets.SERVER_USER }}
             IdentityFile ~/.ssh/id_rsa
     
@@ -62,7 +63,7 @@ jobs:
         # 设置正确的文件权限
         ssh server "find /var/www/auth.royeenote.online/public_html -type f -exec chmod 644 {} \;"
         ssh server "find /var/www/auth.royeenote.online/public_html -type d -exec chmod 755 {} \;"
-        ssh server "chown -R www-data:www-data /var/www/auth.royeenote.online/public_html"
+        ssh server "chown -R apache:apache /var/www/auth.royeenote.online/public_html"
         
         # 验证部署
         echo "验证部署状态..."
