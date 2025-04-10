@@ -425,12 +425,25 @@ error_log("重定向URL: $redirect_url");
             
             fetch(window.location.href, {
                 method: 'POST',
-                body: formData
+                body: formData,
+                // 添加凭据以确保Cookie被发送和接收
+                credentials: 'same-origin'
             })
             .then(response => {
                 if (response.ok) {
+                    // 保存认证状态到会话存储，防止页面刷新后丢失状态
+                    sessionStorage.setItem('auth_completed', 'true');
+                    
                     // 验证成功，重定向到请求的原始URL
-                    window.location.href = getRedirectUrl();
+                    const redirectUrl = getRedirectUrl();
+                    console.log('认证成功，重定向到:', redirectUrl);
+                    
+                    // 使用较短的延迟确保浏览器有时间处理响应
+                    setTimeout(() => {
+                        window.location.href = redirectUrl;
+                    }, 100);
+                    
+                    return null;
                 } else {
                     // 验证失败
                     return response.text();
@@ -477,6 +490,20 @@ error_log("重定向URL: $redirect_url");
                         submitForm(new Event('submit'));
                     }
                 }
+            }
+        });
+        
+        // 页面加载时检查是否有保存的验证状态
+        window.addEventListener('load', function() {
+            // 如果有保存的认证状态，且当前页面不是重定向的目标页面，则直接跳转
+            const authCompleted = sessionStorage.getItem('auth_completed');
+            const redirected = sessionStorage.getItem('redirected');
+            
+            if (authCompleted === 'true' && !redirected) {
+                sessionStorage.setItem('redirected', 'true');
+                const redirectUrl = getRedirectUrl();
+                console.log('检测到已认证状态，重定向到:', redirectUrl);
+                window.location.href = redirectUrl;
             }
         });
     </script>
