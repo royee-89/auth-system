@@ -1,0 +1,87 @@
+name: Deploy Auth System
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: '部署原因'
+        required: false
+        default: '手动触发部署'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+    
+    - name: 设置PHP环境
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.1'
+        extensions: mbstring, dom, fileinfo, curl
+    
+    - name: 安装依赖
+      run: |
+        echo "无需安装PHP依赖"
+    
+    - name: 代码检查
+      run: |
+        php -l public/index.php
+        echo "PHP语法检查通过"
+    
+    - name: 设置SSH密钥
+      uses: shimataro/ssh-key-action@v2
+      with:
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        known_hosts: ${{ secrets.SSH_KNOWN_HOSTS }}
+        config: |
+          Host server
+            HostName ${{ secrets.SERVER_IP }}
+            User ${{ secrets.SERVER_USER }}
+            IdentityFile ~/.ssh/id_rsa
+    
+    - name: 部署到服务器
+      run: |
+        # 备份当前文件
+        ssh server "cp /var/www/auth.royeenote.online/public_html/index.php /var/www/auth.royeenote.online/public_html/index.php.bak-$(date +%Y%m%d%H%M%S) || true"
+        
+        # 创建目录（如果不存在）
+        ssh server "mkdir -p /var/www/auth.royeenote.online/public_html"
+        
+        # 转换所有的换行符为Unix格式，避免Windows/Mac换行符问题
+        find public -type f -name "*.php" -exec dos2unix {} \;
+        
+        # 部署文件
+        scp -r public/* server:/var/www/auth.royeenote.online/public_html/
+        
+        # 设置正确的文件权限
+        ssh server "find /var/www/auth.royeenote.online/public_html -type f -exec chmod 644 {} \;"
+        ssh server "find /var/www/auth.royeenote.online/public_html -type d -exec chmod 755 {} \;"
+        ssh server "chown -R www-data:www-data /var/www/auth.royeenote.online/public_html"
+        
+        # 验证部署
+        echo "验证部署状态..."
+        DEPLOY_CHECK=$(ssh server "ls -la /var/www/auth.royeenote.online/public_html/index.php")
+        echo "$DEPLOY_CHECK"
+        
+        if [[ -n "$DEPLOY_CHECK" ]]; then
+          echo "🎉 部署成功!"
+        else
+          echo "❌ 部署失败!"
+          exit 1
+        fi
+    
+    - name: 发送部署通知
+      if: always()
+      run: |
+        STATUS="${{ job.status }}"
+        if [ "$STATUS" = "success" ]; then
+          echo "✅ 部署成功：auth-system已成功部署到服务器"
+        else
+          echo "❌ 部署失败：请检查日志确定原因"
+        fi 
