@@ -1,0 +1,11 @@
+# 用户数据库
+# 用户名: admin
+# 密码: YourSecurePassword123 (更改后需要用新哈希替换)
+
+users:
+  admin:
+    displayname: "Admin User"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$SWN5amRrQzVBZkVCNnpXWQ$zQwQJSFLMjj/M2lQAlUWr36Hpi1dQTrKm1ebLuKD1LI"
+    email: admin@royeenote.online
+    groups:
+      - admins 

@@ -1,0 +1,52 @@
+##############################################################################
+#                           Authelia Configuration                           #
+##############################################################################
+
+server:
+  host: 0.0.0.0
+  port: 9091
+
+log:
+  level: info
+
+jwt_secret: 5172a93ff0a5753973b5c914123480df0ba324c858fdfa70249e34a17382eb63a2da6837f8133f885baa56436d3b05eeccfb76709fb24bc7affe9b7c33d57e4c
+
+authentication_backend:
+  file:
+    path: /config/users_database.yml
+
+session:
+  name: authelia_session
+  domain: royeenote.online
+  secret: 3ba0cbafcbc4640be7187ca28a86905780c52b349fdf81e5057effe656732ae4166c646be713f91dbf7c0c312e24dd60a6bef1764e88aca993e3f01f95c0b0d5
+  expiration: 3600  # 1 hour
+  inactivity: 300   # 5 minutes
+  remember_me_duration: 1M  # 1 month
+
+totp:
+  issuer: royeenote.online
+  period: 30
+  skew: 1
+
+access_control:
+  default_policy: deny
+  rules:
+    - domain: "auth.royeenote.online"
+      policy: bypass
+    - domain: "n8n.royeenote.online"
+      policy: two_factor
+    - domain: "clash.royeenote.online"
+      policy: two_factor
+
+regulation:
+  max_retries: 3
+  find_time: 2m
+  ban_time: 5m
+
+storage:
+  local:
+    path: /config/db.sqlite3
+
+notifier:
+  filesystem:
+    filename: /config/notification.txt
