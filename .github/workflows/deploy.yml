@@ -68,7 +68,7 @@ jobs:
         scp -r public/* server:/www/wwwroot/tinotools/auth/public_html/
         
         # 部署管理后台文件
-        scp -r admin/* server:/www/wwwroot/tinotools/admin/public_html/
+        scp -r admin/public/* server:/www/wwwroot/tinotools/admin/public_html/
         
         # 部署Nginx配置文件
         ssh server "sudo cp /etc/nginx/conf.d/* /etc/nginx/conf.d.bak/"
