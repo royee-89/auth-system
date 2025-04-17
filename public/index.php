@@ -8,12 +8,39 @@ ini_set('error_log', '/var/log/php-fpm/www-error.log');
 // 将所有错误发送到日志
 error_log("认证脚本开始运行");
 
-// 定义基本变量
-$cookie_name = 'auth_token';
-$cookie_domain = '.royeenote.online';
-$cookie_secure = true;
-$cookie_httponly = true;
-$cookie_lifetime = 3600; // 1小时
+// 加载配置 - 智能检测路径
+$configPaths = [
+    __DIR__ . '/../config/loader.php',         // 本地开发环境: public/../config
+    __DIR__ . '/../../config/loader.php',      // 服务器环境: auth/public_html/../../config
+    '/www/wwwroot/tinotools/config/loader.php' // 绝对路径（服务器特定）
+];
+
+$configLoaded = false;
+foreach ($configPaths as $path) {
+    if (file_exists($path)) {
+        require_once $path;
+        error_log("已加载配置文件: $path");
+        $configLoaded = true;
+        break;
+    }
+}
+
+if (!$configLoaded) {
+    error_log("错误: 无法找到配置文件，尝试路径: " . implode(', ', $configPaths));
+    // 回退到默认设置
+    $cookie_name = 'auth_token';
+    $cookie_domain = '.tinotools.cn';
+    $cookie_secure = true;
+    $cookie_httponly = true;
+    $cookie_lifetime = 3600;
+} else {
+    // 从配置文件中获取设置
+    $cookie_name = config('cookie.name', 'auth_token');
+    $cookie_domain = config('domain.cookie_domain', '.tinotools.cn');
+    $cookie_secure = config('cookie.secure', true);
+    $cookie_httponly = config('cookie.httponly', true);
+    $cookie_lifetime = config('cookie.lifetime', 3600); // 1小时
+}
 
 // 用户凭据验证 (优先验证用户名和密码)
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -28,8 +55,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['action']) && $_POST['action'] === 'verify_credentials') {
         error_log("验证用户名密码: $username");
         
+        // 默认凭据
+        $defaultUsername = 'admin';
+        $defaultPassword = 'Kevin2189..';
+        
         // 验证用户名和密码
-        if ($username === 'admin' && $password === 'Kevin2189..') {
+        if (($configLoaded && $username === config('auth.username') && $password === config('auth.password')) || 
+            (!$configLoaded && $username === $defaultUsername && $password === $defaultPassword)) {
             error_log("用户名密码验证通过");
             http_response_code(200);
             echo json_encode(['success' => true]);
@@ -58,11 +90,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     error_log("用户名: $username, 密码: [已隐藏], TOTP: $totp");
     
     // 验证用户名和密码
-    if ($username === 'admin' && $password === 'Kevin2189..') {
+    if (($configLoaded && $username === config('auth.username') && $password === config('auth.password')) || 
+        (!$configLoaded && $username === 'admin' && $password === 'Kevin2189..')) {
         error_log("用户名密码验证通过");
         
         // 检查TOTP - 简化为接受任何6位数字
-        if (preg_match('/^\d{6}$/', $totp)) {
+        $totpRequired = $configLoaded ? config('auth.totp_required', true) : true;
+        if (!$totpRequired || preg_match('/^\d{6}$/', $totp)) {
             error_log("TOTP验证通过");
             
             // 认证成功，设置Cookie
@@ -106,6 +140,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $redirect_url = isset($_GET['redirect']) ? $_GET['redirect'] : '/';
 error_log("重定向URL: $redirect_url");
 
+// 网站标题
+$site_title = "安全验证 - " . ($configLoaded ? config('domain.base', 'tinotools.cn') : 'tinotools.cn');
+
 // 如果不是POST请求，则显示登录页面
 ?>
 <!DOCTYPE html>
@@ -113,7 +150,7 @@ error_log("重定向URL: $redirect_url");
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>安全验证 - royeenote.online</title>
+    <title><?php echo $site_title; ?></title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
