@@ -17,25 +17,25 @@ authentication_backend:
 
 session:
   name: authelia_session
-  domain: royeenote.online
+  domain: tinotools.cn
   secret: 3ba0cbafcbc4640be7187ca28a86905780c52b349fdf81e5057effe656732ae4166c646be713f91dbf7c0c312e24dd60a6bef1764e88aca993e3f01f95c0b0d5
   expiration: 3600  # 1 hour
   inactivity: 300   # 5 minutes
   remember_me_duration: 1M  # 1 month
 
 totp:
-  issuer: royeenote.online
+  issuer: tinotools.cn
   period: 30
   skew: 1
 
 access_control:
   default_policy: deny
   rules:
-    - domain: "auth.royeenote.online"
+    - domain: "auth.tinotools.cn"
       policy: bypass
-    - domain: "n8n.royeenote.online"
+    - domain: "n8n.tinotools.cn"
       policy: two_factor
-    - domain: "clash.royeenote.online"
+    - domain: "clash.tinotools.cn"
       policy: two_factor
 
 regulation:

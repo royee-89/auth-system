@@ -9,6 +9,10 @@ on:
         description: '部署原因'
         required: false
         default: '手动触发部署'
+      domain:
+        description: '部署域名'
+        required: false
+        default: 'tinotools.cn'
 
 jobs:
   deploy:
@@ -22,7 +26,7 @@ jobs:
     - name: 设置PHP环境
       uses: shivammathur/setup-php@v2
       with:
-        php-version: '8.1'
+        php-version: '7.2'
         extensions: mbstring, dom, fileinfo, curl, sqlite3, pdo_sqlite
         tools: composer:v2
     
@@ -49,6 +53,8 @@ jobs:
             IdentityFile ~/.ssh/id_rsa
     
     - name: 部署到服务器
+      env:
+        DOMAIN: ${{ github.event.inputs.domain || 'tinotools.cn' }}
       run: |
         # 备份当前文件
         ssh server "mkdir -p /var/www/backups/$(date +%Y%m%d)"
@@ -58,7 +64,8 @@ jobs:
         # 创建必要的目录
         ssh server "mkdir -p /www/wwwroot/tinotools/auth/public_html"
         ssh server "mkdir -p /www/wwwroot/tinotools/admin/public_html"
-        ssh server "mkdir -p /www/wwwroot/tinotools/clash/public_html"
+        ssh server "mkdir -p /www/wwwroot/tinotools/config"
+        ssh server "mkdir -p /var/log/auth"
         
         # 转换所有的换行符为Unix格式
         find . -type f -name "*.php" -exec dos2unix {} \;
@@ -68,7 +75,11 @@ jobs:
         scp -r public/* server:/www/wwwroot/tinotools/auth/public_html/
         
         # 部署管理后台文件
-        scp -r admin/public/* server:/www/wwwroot/tinotools/admin/public_html/
+        scp -r admin/* server:/www/wwwroot/tinotools/admin/public_html/
+        
+        # 部署配置文件
+        scp -r config/* server:/www/wwwroot/tinotools/config/
+        scp -r .env.example server:/www/wwwroot/tinotools/.env.example
         
         # 部署Nginx配置文件
         ssh server "sudo cp /etc/nginx/conf.d/* /etc/nginx/conf.d.bak/"
@@ -80,25 +91,38 @@ jobs:
         scp -r scripts server:/www/wwwroot/tinotools/
         ssh server "chmod +x /www/wwwroot/tinotools/scripts/*.sh"
         
-        # 设置文件权限
-        for site in auth admin clash; do
-          ssh server "find /www/wwwroot/tinotools/${site}/public_html -type f -exec chmod 644 {} \;"
-          ssh server "find /www/wwwroot/tinotools/${site}/public_html -type d -exec chmod 755 {} \;"
-          ssh server "chown -R nginx:nginx /www/wwwroot/tinotools/${site}"
-        done
+        # 替换域名（如果不是默认的tinotools.cn）
+        if [[ "$DOMAIN" != "tinotools.cn" ]]; then
+          echo "自定义域名: $DOMAIN，更新配置中..."
+          
+          # 更新环境文件
+          ssh server "sed -i 's/tinotools.cn/$DOMAIN/g' /www/wwwroot/tinotools/.env.example"
+          ssh server "cp /www/wwwroot/tinotools/.env.example /www/wwwroot/tinotools/.env"
+          
+          # 更新配置文件
+          ssh server "sed -i 's/tinotools.cn/$DOMAIN/g' /www/wwwroot/tinotools/config/config.php"
+          
+          # 更新Nginx配置
+          ssh server "for file in /etc/nginx/conf.d/*.conf; do sed -i 's/tinotools.cn/$DOMAIN/g' \$file; done"
+          ssh server "sudo nginx -t && sudo systemctl reload nginx"
+        fi
         
-        # 替换文件中的域名引用
-        ssh server "find /www/wwwroot/tinotools -type f -name '*.php' -o -name '*.js' -o -name '*.html' -o -name '*.json' | xargs grep -l 'royeenote.online' | xargs -r sed -i 's/royeenote\.online/tinotools.cn/g'"
+        # 设置文件权限
+        ssh server "find /www/wwwroot/tinotools -type f -exec chmod 644 {} \;"
+        ssh server "find /www/wwwroot/tinotools -type d -exec chmod 755 {} \;"
+        ssh server "find /www/wwwroot/tinotools/scripts -type f -name '*.sh' -exec chmod +x {} \;"
+        ssh server "chown -R nginx:nginx /www/wwwroot/tinotools"
         
         # 验证部署
         echo "验证部署状态..."
+        SSH_DOMAIN=${DOMAIN:-tinotools.cn}
         for site in auth admin; do
           DEPLOY_CHECK=$(ssh server "ls -la /www/wwwroot/tinotools/${site}/public_html/index.php")
-          echo "${site}.tinotools.cn 部署状态:"
+          echo "${site}.${SSH_DOMAIN} 部署状态:"
           echo "$DEPLOY_CHECK"
           
           if [[ -z "$DEPLOY_CHECK" ]]; then
-            echo "❌ ${site}.tinotools.cn 部署失败!"
+            echo "❌ ${site}.${SSH_DOMAIN} 部署失败!"
             exit 1
           fi
         done
@@ -107,13 +131,15 @@ jobs:
     
     - name: 发送部署通知
       if: always()
+      env:
+        DOMAIN: ${{ github.event.inputs.domain || 'tinotools.cn' }}
       run: |
         STATUS="${{ job.status }}"
         if [ "$STATUS" = "success" ]; then
           echo "✅ 部署成功：所有系统已成功部署到服务器"
-          echo "- auth.tinotools.cn - 认证系统"
-          echo "- admin.tinotools.cn - 管理后台"
-          echo "- clash.tinotools.cn - Clash节点管理"
+          echo "- auth.${DOMAIN} - 认证系统"
+          echo "- admin.${DOMAIN} - 管理后台"
+          echo "- n8n.${DOMAIN} - 工作流自动化"
         else
           echo "❌ 部署失败：请检查日志确定原因"
         fi 
