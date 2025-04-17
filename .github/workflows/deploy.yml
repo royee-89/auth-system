@@ -105,6 +105,7 @@ jobs:
         ssh server "sudo mkdir -p /etc/nginx/conf.d.bak/$(date +%Y%m%d)"
         ssh server "sudo mv /etc/nginx/conf.d/auth.conf /etc/nginx/conf.d.bak/$(date +%Y%m%d)/auth.conf.bak || true"
         ssh server "sudo mv /etc/nginx/conf.d/n8n.conf /etc/nginx/conf.d.bak/$(date +%Y%m%d)/n8n.conf.bak || true"
+        ssh server "sudo mv /etc/nginx/conf.d/ssl.conf /etc/nginx/conf.d.bak/$(date +%Y%m%d)/ssl.conf.bak || true"
         ssh server "sudo cp /etc/nginx/conf.d/*.conf /etc/nginx/conf.d.bak/$(date +%Y%m%d)/ || true"
         
         # 上传新的配置文件
