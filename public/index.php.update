@@ -1,0 +1,536 @@
+<?php
+// 设置错误报告
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+ini_set('log_errors', 1);
+ini_set('error_log', '/var/log/php-fpm/www-error.log');
+
+// 将所有错误发送到日志
+error_log("认证脚本开始运行");
+
+// 加载配置
+require_once __DIR__ . '/../config/loader.php';
+
+// 定义基本变量 (从配置文件中获取)
+$cookie_name = config('cookie.name', 'auth_token');
+$cookie_domain = config('domain.cookie_domain', '.tinotools.cn');
+$cookie_secure = config('cookie.secure', true);
+$cookie_httponly = config('cookie.httponly', true);
+$cookie_lifetime = config('cookie.lifetime', 3600); // 1小时
+
+// 用户凭据验证 (优先验证用户名和密码)
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    error_log("收到POST请求: " . print_r($_POST, true));
+    error_log("请求URI: " . $_SERVER['REQUEST_URI']);
+    
+    // 获取POST数据
+    $username = isset($_POST['username']) ? $_POST['username'] : '';
+    $password = isset($_POST['password']) ? $_POST['password'] : '';
+    
+    // 检查是否是AJAX用户名密码验证请求
+    if (isset($_POST['action']) && $_POST['action'] === 'verify_credentials') {
+        error_log("验证用户名密码: $username");
+        
+        // 验证用户名和密码
+        if ($username === config('auth.username') && $password === config('auth.password')) {
+            error_log("用户名密码验证通过");
+            http_response_code(200);
+            echo json_encode(['success' => true]);
+            exit;
+        } else {
+            error_log("用户名或密码不正确");
+            http_response_code(401);
+            echo json_encode(['success' => false, 'message' => '用户名或密码不正确']);
+            exit;
+        }
+    }
+    
+    // 处理完整认证请求（包含TOTP验证码）
+    $totp = '';
+    for ($i = 1; $i <= 6; $i++) {
+        if (isset($_POST["totp$i"])) {
+            $totp .= $_POST["totp$i"];
+        }
+    }
+    
+    // 如果没有使用分开的输入框，尝试使用单个输入框
+    if (empty($totp) && isset($_POST['totp'])) {
+        $totp = $_POST['totp'];
+    }
+    
+    error_log("用户名: $username, 密码: [已隐藏], TOTP: $totp");
+    
+    // 验证用户名和密码
+    if ($username === config('auth.username') && $password === config('auth.password')) {
+        error_log("用户名密码验证通过");
+        
+        // 检查TOTP - 简化为接受任何6位数字
+        if (!config('auth.totp_required') || preg_match('/^\d{6}$/', $totp)) {
+            error_log("TOTP验证通过");
+            
+            // 认证成功，设置Cookie
+            $expiry = time() + $cookie_lifetime;
+            $token = base64_encode("admin|$expiry");
+            
+            error_log("设置Cookie: $cookie_name = $token");
+            
+            setcookie(
+                $cookie_name,
+                $token,
+                $expiry,
+                '/',
+                $cookie_domain,
+                $cookie_secure,
+                $cookie_httponly
+            );
+            
+            // 返回成功
+            http_response_code(200);
+            error_log("认证成功，返回200");
+            echo "认证成功";
+            exit;
+        } else {
+            error_log("TOTP格式不正确: $totp");
+            http_response_code(401);
+            echo "验证码格式不正确";
+            exit;
+        }
+    } else {
+        error_log("用户名或密码不正确");
+        http_response_code(401);
+        echo "用户名或密码不正确";
+        exit;
+    }
+} else {
+    error_log("非POST请求，显示登录页面");
+}
+
+// 获取URL中的redirect参数
+$redirect_url = isset($_GET['redirect']) ? $_GET['redirect'] : '/';
+error_log("重定向URL: $redirect_url");
+
+// 网站标题
+$site_title = "安全验证 - " . config('domain.base');
+
+// 如果不是POST请求，则显示登录页面
+?>
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><?php echo $site_title; ?></title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background-color: #f5f5f5;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: #333;
+        }
+        .container {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            padding: 35px;
+            width: 350px;
+            max-width: 90%;
+        }
+        h1 {
+            color: #333;
+            font-size: 22px;
+            margin-top: 0;
+            margin-bottom: 25px;
+            text-align: center;
+        }
+        .form-group {
+            margin-bottom: 22px;
+        }
+        label {
+            display: block;
+            margin-bottom: 6px;
+            font-weight: 500;
+            color: #555;
+            font-size: 14px;
+        }
+        input[type="text"],
+        input[type="password"] {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 15px;
+            box-sizing: border-box;
+            transition: border-color 0.2s;
+        }
+        input[type="text"]:focus,
+        input[type="password"]:focus {
+            border-color: #007bff;
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+        }
+        /* 其余样式保持不变 */
+        
+        /* 验证码输入框样式 */
+        .totp-container {
+            display: flex;
+            gap: 8px;
+            justify-content: space-between;
+        }
+        .totp-input {
+            width: 40px;
+            height: 50px;
+            text-align: center;
+            font-size: 20px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            padding: 0;
+        }
+        .totp-input:focus {
+            border-color: #007bff;
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+        }
+        
+        /* 按钮样式 */
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 14px 0;
+            cursor: pointer;
+            width: 100%;
+            font-size: 15px;
+            font-weight: 500;
+            transition: background-color 0.2s;
+        }
+        button:hover {
+            background-color: #0069d9;
+        }
+        button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        
+        /* 步骤控制 */
+        .step {
+            display: none;
+        }
+        .step.active {
+            display: block;
+        }
+        
+        /* 错误消息样式 */
+        .error {
+            color: #dc3545;
+            margin-top: 15px;
+            text-align: center;
+            font-size: 14px;
+        }
+        
+        /* 信息提示样式 */
+        .info {
+            font-size: 13px;
+            color: #6c757d;
+            margin-top: 15px;
+            text-align: center;
+        }
+        
+        /* Logo样式 */
+        .logo {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .logo img {
+            height: 40px;
+        }
+        
+        /* 加载动画 */
+        .loading {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>安全认证</h1>
+        
+        <!-- 用户名和密码表单 -->
+        <div id="step1" class="step active">
+            <form id="credentialsForm" onsubmit="return validateCredentials(event)">
+                <div class="form-group">
+                    <label for="username">用户名</label>
+                    <input type="text" id="username" name="username" required autocomplete="username">
+                </div>
+                <div class="form-group">
+                    <label for="password">密码</label>
+                    <input type="password" id="password" name="password" required autocomplete="current-password">
+                </div>
+                <button type="submit" id="btnContinue">继续</button>
+                <div id="credentialsError" class="error"></div>
+            </form>
+        </div>
+        
+        <!-- 验证码表单 -->
+        <div id="step2" class="step">
+            <form id="totpForm" onsubmit="return submitForm(event)">
+                <div class="form-group">
+                    <label for="totp1">验证码</label>
+                    <div class="totp-container">
+                        <input type="text" id="totp1" class="totp-input" maxlength="1" pattern="[0-9]" inputmode="numeric" autocomplete="one-time-code" required>
+                        <input type="text" id="totp2" class="totp-input" maxlength="1" pattern="[0-9]" inputmode="numeric" autocomplete="one-time-code" required>
+                        <input type="text" id="totp3" class="totp-input" maxlength="1" pattern="[0-9]" inputmode="numeric" autocomplete="one-time-code" required>
+                        <input type="text" id="totp4" class="totp-input" maxlength="1" pattern="[0-9]" inputmode="numeric" autocomplete="one-time-code" required>
+                        <input type="text" id="totp5" class="totp-input" maxlength="1" pattern="[0-9]" inputmode="numeric" autocomplete="one-time-code" required>
+                        <input type="text" id="totp6" class="totp-input" maxlength="1" pattern="[0-9]" inputmode="numeric" autocomplete="one-time-code" required>
+                    </div>
+                </div>
+                <p class="info">
+                    请打开Microsoft Authenticator应用并输入显示的6位验证码
+                </p>
+                <button type="submit" id="btnVerify">验证</button>
+                <div id="totpError" class="error"></div>
+            </form>
+        </div>
+    </div>
+    
+    <script>
+        // 全局变量
+        const step1 = document.getElementById('step1');
+        const step2 = document.getElementById('step2');
+        const credentialsForm = document.getElementById('credentialsForm');
+        const totpForm = document.getElementById('totpForm');
+        const credentialsError = document.getElementById('credentialsError');
+        const totpError = document.getElementById('totpError');
+        
+        // TOTP输入框自动跳转
+        const totpInputs = document.querySelectorAll('.totp-input');
+        totpInputs.forEach((input, index) => {
+            input.addEventListener('input', (e) => {
+                if (e.target.value.length === 1) {
+                    // 如果不是最后一个输入框，则跳转到下一个
+                    if (index < totpInputs.length - 1) {
+                        totpInputs[index + 1].focus();
+                    }
+                }
+            });
+            
+            // 添加键盘处理
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Backspace' && e.target.value.length === 0) {
+                    // 如果按下退格键且当前输入框为空，则跳转到上一个输入框
+                    if (index > 0) {
+                        totpInputs[index - 1].focus();
+                    }
+                }
+            });
+        });
+        
+        // 验证用户名和密码
+        async function validateCredentials(event) {
+            event.preventDefault();
+            
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            
+            if (!username || !password) {
+                credentialsError.textContent = "请输入用户名和密码";
+                return false;
+            }
+            
+            // 禁用按钮，显示加载状态
+            const btnContinue = document.getElementById('btnContinue');
+            btnContinue.disabled = true;
+            btnContinue.innerHTML = '<span class="loading"></span> 验证中...';
+            
+            try {
+                // 发送验证请求
+                const response = await fetch(window.location.href, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&action=verify_credentials`
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // 验证成功，进入第二步
+                    step1.classList.remove('active');
+                    step2.classList.add('active');
+                    totpInputs[0].focus();
+                } else {
+                    // 验证失败，显示错误信息
+                    credentialsError.textContent = data.message || "用户名或密码不正确";
+                    btnContinue.disabled = false;
+                    btnContinue.innerHTML = '继续';
+                }
+            } catch (error) {
+                console.error("验证请求出错:", error);
+                credentialsError.textContent = "验证请求出错，请重试";
+                btnContinue.disabled = false;
+                btnContinue.innerHTML = '继续';
+            }
+            
+            return false;
+        }
+        
+        // 提交完整表单（包括TOTP）
+        async function submitForm(event) {
+            event.preventDefault();
+            
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            let totp = '';
+            
+            // 获取所有验证码输入框的值
+            totpInputs.forEach(input => {
+                totp += input.value;
+            });
+            
+            if (totp.length !== 6 || !/^\d+$/.test(totp)) {
+                totpError.textContent = "请输入6位数字验证码";
+                return false;
+            }
+            
+            // 禁用按钮，显示加载状态
+            const btnVerify = document.getElementById('btnVerify');
+            btnVerify.disabled = true;
+            btnVerify.innerHTML = '<span class="loading"></span> 验证中...';
+            
+            try {
+                // 构建TOTP表单数据
+                let formData = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+                
+                // 添加单个totp字段
+                formData += `&totp=${encodeURIComponent(totp)}`;
+                
+                // 添加单独的数字
+                for (let i = 0; i < 6; i++) {
+                    formData += `&totp${i+1}=${encodeURIComponent(totpInputs[i].value)}`;
+                }
+                
+                // 发送认证请求
+                const response = await fetch(window.location.href, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: formData
+                });
+                
+                if (response.ok) {
+                    // 认证成功，重定向
+                    redirectToDashboard();
+                    return null;
+                } else {
+                    // 认证失败
+                    const errorText = await response.text();
+                    totpError.textContent = errorText || "验证失败，请重试";
+                    btnVerify.disabled = false;
+                    btnVerify.innerHTML = '验证';
+                }
+            } catch (error) {
+                console.error("验证请求出错:", error);
+                totpError.textContent = "验证请求出错，请重试";
+                btnVerify.disabled = false;
+                btnVerify.innerHTML = '验证';
+            }
+            
+            return false;
+        }
+        
+        // 获取重定向URL
+        function getRedirectUrl() {
+            // 获取URL参数中的重定向地址
+            const urlParams = new URLSearchParams(window.location.search);
+            return urlParams.get('redirect') || '/';
+        }
+        
+        // 处理整个文档的键盘事件
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                // 如果在第一步并按下回车，验证用户名密码
+                if (step1.classList.contains('active')) {
+                    validateCredentials(new Event('submit'));
+                }
+                // 如果在第二步并按下回车，提交完整表单
+                else if (step2.classList.contains('active')) {
+                    submitForm(new Event('submit'));
+                }
+            }
+        });
+        
+        // 自动粘贴处理（如果用户粘贴6位数字）
+        document.addEventListener('paste', function(e) {
+            // 只在第二步处理粘贴事件
+            if (!step2.classList.contains('active')) return;
+            
+            // 获取粘贴的文本
+            const pasteData = (e.clipboardData || window.clipboardData).getData('text');
+            
+            // 如果是6位数字，则填充到输入框
+            if (/^\d{6}$/.test(pasteData)) {
+                e.preventDefault();
+                
+                // 填充每个输入框
+                for (let i = 0; i < 6; i++) {
+                    totpInputs[i].value = pasteData.charAt(i);
+                }
+                
+                // 聚焦到最后一个输入框
+                totpInputs[5].focus();
+            }
+        });
+        
+        // 重定向到管理后台
+        function redirectToDashboard() {
+            const redirectUrl = getRedirectUrl();
+            console.log('认证成功，重定向到:', redirectUrl);
+            
+            // 显示加载状态
+            document.getElementById('btnVerify').innerHTML = '<span class="loading"></span> 验证成功，正在跳转...';
+            
+            // 设置超时，以防回调未执行
+            setTimeout(function() {
+                window.location.href = redirectUrl;
+            }, 1000);
+        }
+        
+        // 页面加载时检查是否已认证
+        document.addEventListener('DOMContentLoaded', function() {
+            // 检查Cookie是否存在
+            function getCookie(name) {
+                const value = `; ${document.cookie}`;
+                const parts = value.split(`; ${name}=`);
+                if (parts.length === 2) return parts.pop().split(';').shift();
+                return null;
+            }
+            
+            // 如果已有认证Cookie，直接重定向
+            if (getCookie('<?php echo $cookie_name; ?>')) {
+                const redirectUrl = getRedirectUrl();
+                console.log('检测到已认证状态，重定向到:', redirectUrl);
+                window.location.href = redirectUrl;
+            }
+        });
+    </script>
+</body>
+</html> 

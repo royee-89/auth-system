@@ -1,0 +1,71 @@
+server {
+    listen 80;
+    listen [::]:80;
+    server_name auth.tinotools.cn;
+    
+    # 重定向HTTP到HTTPS
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name auth.tinotools.cn;
+    
+    # SSL配置
+    ssl_certificate /etc/letsencrypt/live/tinotools.cn/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/tinotools.cn/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+    
+    # 网站根目录
+    root /var/www/auth.tinotools.cn/public_html;
+    index index.php index.html index.htm;
+    
+    # 日志配置
+    access_log /var/log/nginx/auth.tinotools.cn.access.log;
+    error_log /var/log/nginx/auth.tinotools.cn.error.log;
+    
+    # 安全头信息
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Frame-Options "SAMEORIGIN";
+    add_header X-XSS-Protection "1; mode=block";
+    add_header X-Content-Type-Options "nosniff";
+    
+    # 隐藏文件访问限制
+    location ~ /\. {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }
+    
+    # 网站图标和机器人文件处理
+    location = /favicon.ico {
+        log_not_found off;
+        access_log off;
+    }
+    
+    location = /robots.txt {
+        allow all;
+        log_not_found off;
+        access_log off;
+    }
+    
+    # PHP处理
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        include fastcgi_params;
+    }
+    
+    # 主要内容处理
+    location / {
+        try_files $uri $uri/ /index.php?$args;
+    }
+} 

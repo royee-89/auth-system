@@ -1,0 +1,145 @@
+name: Deploy Auth System
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: '部署原因'
+        required: false
+        default: '手动触发部署'
+      domain:
+        description: '部署域名'
+        required: false
+        default: 'tinotools.cn'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+    
+    - name: 设置PHP环境
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.1'
+        extensions: mbstring, dom, fileinfo, curl, sqlite3, pdo_sqlite
+        tools: composer:v2
+    
+    - name: 安装依赖
+      run: |
+        composer install --no-dev --optimize-autoloader
+    
+    - name: 代码检查
+      run: |
+        php -l public/index.php
+        find admin -type f -name "*.php" -exec php -l {} \;
+        echo "PHP语法检查通过"
+    
+    - name: 设置SSH密钥
+      uses: shimataro/ssh-key-action@v2
+      with:
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        known_hosts: ${{ secrets.SSH_KNOWN_HOSTS }}
+        config: |
+          Host server
+            HostName ${{ secrets.SERVER_IP }}
+            Port ${{ secrets.SERVER_PORT }}
+            User ${{ secrets.SERVER_USER }}
+            IdentityFile ~/.ssh/id_rsa
+    
+    - name: 部署到服务器
+      env:
+        DOMAIN: ${{ github.event.inputs.domain || 'tinotools.cn' }}
+      run: |
+        # 备份当前文件
+        ssh server "mkdir -p /var/www/backups/$(date +%Y%m%d)"
+        ssh server "cp -r /www/wwwroot/tinotools/auth/public_html /var/www/backups/$(date +%Y%m%d)/auth || true"
+        ssh server "cp -r /www/wwwroot/tinotools/admin/public_html /var/www/backups/$(date +%Y%m%d)/admin || true"
+        
+        # 创建必要的目录
+        ssh server "mkdir -p /www/wwwroot/tinotools/auth/public_html"
+        ssh server "mkdir -p /www/wwwroot/tinotools/admin/public_html"
+        ssh server "mkdir -p /www/wwwroot/tinotools/config"
+        ssh server "mkdir -p /var/log/auth"
+        
+        # 转换所有的换行符为Unix格式
+        find . -type f -name "*.php" -exec dos2unix {} \;
+        find . -type f -name "*.sh" -exec dos2unix {} \;
+        
+        # 部署认证系统文件
+        scp -r public/* server:/www/wwwroot/tinotools/auth/public_html/
+        
+        # 部署管理后台文件
+        scp -r admin/* server:/www/wwwroot/tinotools/admin/public_html/
+        
+        # 部署配置文件
+        scp -r config/* server:/www/wwwroot/tinotools/config/
+        scp -r .env.example server:/www/wwwroot/tinotools/.env.example
+        
+        # 部署Nginx配置文件
+        ssh server "sudo cp /etc/nginx/conf.d/* /etc/nginx/conf.d.bak/"
+        scp nginx/*.tinotools.cn.conf server:/tmp/
+        ssh server "sudo mv /tmp/*.conf /etc/nginx/conf.d/"
+        ssh server "sudo nginx -t && sudo systemctl reload nginx"
+        
+        # 部署脚本文件
+        scp -r scripts server:/www/wwwroot/tinotools/
+        ssh server "chmod +x /www/wwwroot/tinotools/scripts/*.sh"
+        
+        # 替换域名（如果不是默认的tinotools.cn）
+        if [[ "$DOMAIN" != "tinotools.cn" ]]; then
+          echo "自定义域名: $DOMAIN，更新配置中..."
+          
+          # 更新环境文件
+          ssh server "sed -i 's/tinotools.cn/$DOMAIN/g' /www/wwwroot/tinotools/.env.example"
+          ssh server "cp /www/wwwroot/tinotools/.env.example /www/wwwroot/tinotools/.env"
+          
+          # 更新配置文件
+          ssh server "sed -i 's/tinotools.cn/$DOMAIN/g' /www/wwwroot/tinotools/config/config.php"
+          
+          # 更新Nginx配置
+          ssh server "for file in /etc/nginx/conf.d/*.conf; do sed -i 's/tinotools.cn/$DOMAIN/g' \$file; done"
+          ssh server "sudo nginx -t && sudo systemctl reload nginx"
+        fi
+        
+        # 设置文件权限
+        ssh server "find /www/wwwroot/tinotools -type f -exec chmod 644 {} \;"
+        ssh server "find /www/wwwroot/tinotools -type d -exec chmod 755 {} \;"
+        ssh server "find /www/wwwroot/tinotools/scripts -type f -name '*.sh' -exec chmod +x {} \;"
+        ssh server "chown -R nginx:nginx /www/wwwroot/tinotools"
+        
+        # 验证部署
+        echo "验证部署状态..."
+        SSH_DOMAIN=${DOMAIN:-tinotools.cn}
+        for site in auth admin; do
+          DEPLOY_CHECK=$(ssh server "ls -la /www/wwwroot/tinotools/${site}/public_html/index.php")
+          echo "${site}.${SSH_DOMAIN} 部署状态:"
+          echo "$DEPLOY_CHECK"
+          
+          if [[ -z "$DEPLOY_CHECK" ]]; then
+            echo "❌ ${site}.${SSH_DOMAIN} 部署失败!"
+            exit 1
+          fi
+        done
+        
+        echo "🎉 所有站点部署成功!"
+    
+    - name: 发送部署通知
+      if: always()
+      env:
+        DOMAIN: ${{ github.event.inputs.domain || 'tinotools.cn' }}
+      run: |
+        STATUS="${{ job.status }}"
+        if [ "$STATUS" = "success" ]; then
+          echo "✅ 部署成功：所有系统已成功部署到服务器"
+          echo "- auth.${DOMAIN} - 认证系统"
+          echo "- admin.${DOMAIN} - 管理后台"
+          echo "- n8n.${DOMAIN} - 工作流自动化"
+        else
+          echo "❌ 部署失败：请检查日志确定原因"
+        fi 
